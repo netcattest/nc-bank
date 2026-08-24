@@ -1,0 +1,17 @@
+.DS_Store
+.env
+.env.*
+!.env.exemplo
+
+node_modules/
+dist/
+.next/
+coverage/
+
+*.log
+npm-debug.log*
+*.tsbuildinfo
+
+segredos/*
+!segredos/.gitkeep
+!segredos/LEIA-ME.md

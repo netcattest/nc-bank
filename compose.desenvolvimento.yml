@@ -1,0 +1,233 @@
+name: netcatbank-dev
+
+services:
+  proxy:
+    image: traefik:v3.7.6
+    command:
+      - --api.dashboard=false
+      - --global.checknewversion=false
+      - --global.sendanonymoususage=false
+      - --log.level=INFO
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=:8443
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+    ports:
+      - "8080:80"
+      - "8443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - rede-publica
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+    labels:
+      - traefik.enable=true
+      - traefik.http.middlewares.cabecalhos-seguros.headers.stsSeconds=31536000
+      - traefik.http.middlewares.cabecalhos-seguros.headers.stsIncludeSubdomains=true
+      - traefik.http.middlewares.cabecalhos-seguros.headers.forceSTSHeader=true
+      - traefik.http.middlewares.cabecalhos-seguros.headers.contentTypeNosniff=true
+      - traefik.http.middlewares.cabecalhos-seguros.headers.referrerPolicy=no-referrer
+      - traefik.http.middlewares.cabecalhos-seguros.headers.permissionsPolicy=camera=(), microphone=(), geolocation=(), payment=()
+
+  frente:
+    build:
+      context: .
+      dockerfile: aplicacoes/frente/Dockerfile
+      target: desenvolvimento
+    environment:
+      NODE_ENV: development
+      API_INTERNA_URL: https://api:3001
+      NCBANK_CANAL_INTERNO_ATIVO: "true"
+      NCBANK_IDENTIDADE_BFF: netcatbank-frente-bff
+      NCBANK_ID_SEGREDO_CANAL_INTERNO: atual
+      NCBANK_SEGREDO_CANAL_INTERNO: netcatbank-canal-interno-desenvolvimento-9e7b5d1a4c2f8a6d
+      NCBANK_MTLS_CLIENTE_ATIVO: "true"
+      NCBANK_MTLS_CA: /certificados/mtls/ca.crt
+      NCBANK_MTLS_CLIENTE_CERT: /certificados/mtls/bff.crt
+      NCBANK_MTLS_CLIENTE_KEY: /certificados/mtls/bff.key
+      NCBANK_MTLS_SERVERNAME: api.netcatbank.interno
+      NEXT_PUBLIC_ABRIR_CONTA_URL: https://abrir-conta.netcatbank.localtest.me:8443
+      NEXT_PUBLIC_AREA_CLIENTE_URL: https://cliente.netcatbank.localtest.me:8443
+      NEXT_PUBLIC_PAINEL_URL: https://painel.netcatbank.localtest.me:8443
+      NEXT_PUBLIC_INDICACOES_URL: https://indique.netcatbank.localtest.me:8443
+      NEXT_PUBLIC_ESTATICOS_URL: https://estaticos.netcatbank.localtest.me:8443
+      NEXT_TELEMETRY_DISABLED: "1"
+      NPM_CONFIG_CACHE: /tmp/netcatbank-npm-cache
+      NPM_CONFIG_FUND: "false"
+      NPM_CONFIG_UPDATE_NOTIFIER: "false"
+    user: "${USUARIO_LOCAL_UID:-1000}:${USUARIO_LOCAL_GID:-1000}"
+    depends_on:
+      api:
+        condition: service_healthy
+    volumes:
+      - .:/codigo
+      - dependencias-node-dev:/codigo/node_modules
+      - ./aplicacoes/frente/.next:/codigo/aplicacoes/frente/.next
+      - ./segredos/mtls:/certificados/mtls:ro
+    networks:
+      - rede-publica
+      - rede-privada
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=netcatbank_rede_publica_dev
+      - traefik.http.routers.frente-dev.rule=Host(`localhost`) || Host(`netcatbank.localhost`) || Host(`localtest.me`) || Host(`netcatbank.localtest.me`)
+      - traefik.http.routers.frente-dev.entrypoints=websecure
+      - traefik.http.routers.frente-dev.tls=true
+      - traefik.http.routers.frente-dev.middlewares=cabecalhos-seguros@docker
+      - traefik.http.services.frente-dev.loadbalancer.server.port=3000
+      - traefik.http.routers.abertura-dev.rule=Host(`abrir-conta.localhost`) || Host(`abrir-conta.netcatbank.localhost`) || Host(`abrir-conta.localtest.me`) || Host(`abrir-conta.netcatbank.localtest.me`)
+      - traefik.http.routers.abertura-dev.entrypoints=websecure
+      - traefik.http.routers.abertura-dev.tls=true
+      - traefik.http.routers.abertura-dev.middlewares=cabecalhos-seguros@docker
+      - traefik.http.routers.abertura-dev.service=frente-dev
+      - traefik.http.routers.cliente-dev.rule=Host(`cliente.localhost`) || Host(`cliente.netcatbank.localhost`) || Host(`area-cliente.localhost`) || Host(`area-cliente.netcatbank.localhost`) || Host(`cliente.localtest.me`) || Host(`cliente.netcatbank.localtest.me`) || Host(`area-cliente.localtest.me`) || Host(`area-cliente.netcatbank.localtest.me`)
+      - traefik.http.routers.cliente-dev.entrypoints=websecure
+      - traefik.http.routers.cliente-dev.tls=true
+      - traefik.http.routers.cliente-dev.middlewares=cabecalhos-seguros@docker
+      - traefik.http.routers.cliente-dev.service=frente-dev
+      - traefik.http.routers.painel-dev.rule=Host(`painel.localhost`) || Host(`painel.netcatbank.localhost`) || Host(`dashboard.localhost`) || Host(`dashboard.netcatbank.localhost`) || Host(`painel.localtest.me`) || Host(`painel.netcatbank.localtest.me`) || Host(`dashboard.localtest.me`) || Host(`dashboard.netcatbank.localtest.me`)
+      - traefik.http.routers.painel-dev.entrypoints=websecure
+      - traefik.http.routers.painel-dev.tls=true
+      - traefik.http.routers.painel-dev.middlewares=cabecalhos-seguros@docker
+      - traefik.http.routers.painel-dev.service=frente-dev
+      - traefik.http.routers.indicacoes-dev.rule=Host(`indique.localhost`) || Host(`indique.netcatbank.localhost`) || Host(`indique.localtest.me`) || Host(`indique.netcatbank.localtest.me`) || Host(`indique.localme`) || Host(`indique.netcatbank.localme`)
+      - traefik.http.routers.indicacoes-dev.entrypoints=websecure
+      - traefik.http.routers.indicacoes-dev.tls=true
+      - traefik.http.routers.indicacoes-dev.middlewares=cabecalhos-seguros@docker
+      - traefik.http.routers.indicacoes-dev.service=frente-dev
+
+  estaticos:
+    image: nginxinc/nginx-unprivileged:1.29-alpine
+    volumes:
+      - ./aplicacoes/frente/public:/usr/share/nginx/html:ro
+      - ./infraestrutura/estaticos/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - rede-publica
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8080/marca/favicon-32x32.png"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=netcatbank_rede_publica_dev
+      - traefik.http.routers.estaticos-dev.rule=Host(`estaticos.localhost`) || Host(`static.localhost`) || Host(`estaticos.netcatbank.localhost`) || Host(`estaticos.localtest.me`) || Host(`static.localtest.me`) || Host(`estaticos.netcatbank.localtest.me`)
+      - traefik.http.routers.estaticos-dev.entrypoints=websecure
+      - traefik.http.routers.estaticos-dev.tls=true
+      - traefik.http.routers.estaticos-dev.middlewares=cabecalhos-seguros@docker
+      - traefik.http.services.estaticos-dev.loadbalancer.server.port=8080
+
+  api:
+    build:
+      context: .
+      dockerfile: aplicacoes/api/Dockerfile
+      target: desenvolvimento
+    environment:
+      NODE_ENV: development
+      HOST: 0.0.0.0
+      PORTA: 3001
+      NPM_CONFIG_CACHE: /tmp/netcatbank-npm-cache
+      NPM_CONFIG_FUND: "false"
+      NPM_CONFIG_UPDATE_NOTIFIER: "false"
+      ORIGENS_PERMITIDAS: https://localhost,https://localhost:8443,https://netcatbank.localhost,https://netcatbank.localhost:8443,https://abrir-conta.localhost,https://abrir-conta.localhost:8443,https://abrir-conta.netcatbank.localhost,https://abrir-conta.netcatbank.localhost:8443,https://cliente.localhost,https://cliente.localhost:8443,https://cliente.netcatbank.localhost,https://cliente.netcatbank.localhost:8443,https://area-cliente.localhost,https://area-cliente.localhost:8443,https://area-cliente.netcatbank.localhost,https://area-cliente.netcatbank.localhost:8443,https://painel.localhost,https://painel.localhost:8443,https://painel.netcatbank.localhost,https://painel.netcatbank.localhost:8443,https://dashboard.localhost,https://dashboard.localhost:8443,https://dashboard.netcatbank.localhost,https://dashboard.netcatbank.localhost:8443,https://indique.localhost,https://indique.localhost:8443,https://indique.netcatbank.localhost,https://indique.netcatbank.localhost:8443,https://localtest.me:8443,https://netcatbank.localtest.me:8443,https://abrir-conta.localtest.me:8443,https://abrir-conta.netcatbank.localtest.me:8443,https://cliente.localtest.me:8443,https://cliente.netcatbank.localtest.me:8443,https://area-cliente.localtest.me:8443,https://area-cliente.netcatbank.localtest.me:8443,https://painel.localtest.me:8443,https://painel.netcatbank.localtest.me:8443,https://dashboard.localtest.me:8443,https://dashboard.netcatbank.localtest.me:8443,https://indique.localtest.me:8443,https://indique.netcatbank.localtest.me:8443,https://netcatbank.localme:8443,https://abrir-conta.localme:8443,https://abrir-conta.netcatbank.localme:8443,https://cliente.localme:8443,https://cliente.netcatbank.localme:8443,https://area-cliente.localme:8443,https://area-cliente.netcatbank.localme:8443,https://painel.localme:8443,https://painel.netcatbank.localme:8443,https://dashboard.localme:8443,https://dashboard.netcatbank.localme:8443,https://indique.localme:8443,https://indique.netcatbank.localme:8443
+      URL_INDICACOES_PUBLICA: https://indique.netcatbank.localtest.me:8443
+      NCBANK_COOKIE_DOMAIN: netcatbank.localtest.me
+      URL_ESTATICOS_PUBLICA: https://estaticos.netcatbank.localtest.me:8443
+      NCBANK_IDENTIDADE_BFF: netcatbank-frente-bff
+      NCBANK_ID_SEGREDO_CANAL_INTERNO: atual
+      NCBANK_SEGREDO_CANAL_INTERNO: netcatbank-canal-interno-desenvolvimento-9e7b5d1a4c2f8a6d
+      NCBANK_MTLS_API_ATIVO: "true"
+      NCBANK_MTLS_CA: /certificados/mtls/ca.crt
+      NCBANK_MTLS_API_CERT: /certificados/mtls/api.crt
+      NCBANK_MTLS_API_KEY: /certificados/mtls/api.key
+      NCBANK_MTLS_CLIENTE_CN: bff.netcatbank.interno
+      DATABASE_URL: postgresql://netcatbank_app:netcatbank_local@banco-dados:5432/netcatbank
+      REDIS_URL: redis://:netcatbank_cache_local@cache:6379
+    user: "${USUARIO_LOCAL_UID:-1000}:${USUARIO_LOCAL_GID:-1000}"
+    depends_on:
+      banco-dados:
+        condition: service_healthy
+      cache:
+        condition: service_healthy
+    volumes:
+      - .:/codigo
+      - dependencias-node-dev:/codigo/node_modules
+      - ./segredos/mtls:/certificados/mtls:ro
+    networks:
+      - rede-privada
+      - rede-saida
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "node", "-e", "const https=require('node:https'),fs=require('node:fs');const o={hostname:'127.0.0.1',port:3001,path:'/saude',servername:'api.netcatbank.interno',ca:fs.readFileSync('/certificados/mtls/ca.crt'),cert:fs.readFileSync('/certificados/mtls/monitor.crt'),key:fs.readFileSync('/certificados/mtls/monitor.key'),rejectUnauthorized:true,minVersion:'TLSv1.3'};const r=https.request(o,(s)=>process.exit(s.statusCode===200?0:1));r.on('error',()=>process.exit(1));r.end();"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+  banco-dados:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: netcatbank
+      POSTGRES_USER: netcatbank_app
+      POSTGRES_PASSWORD: netcatbank_local
+    volumes:
+      - dados-postgres-dev:/var/lib/postgresql
+      - ./infraestrutura/banco-dados/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - rede-privada
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U netcatbank_app -d netcatbank"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  cache:
+    image: redis:8-alpine
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "netcatbank_cache_local"]
+    volumes:
+      - dados-redis-dev:/data
+    networks:
+      - rede-privada
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a netcatbank_cache_local ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+networks:
+  rede-publica:
+    name: netcatbank_rede_publica_dev
+  rede-privada:
+    name: netcatbank_rede_privada_dev
+    internal: true
+  rede-saida:
+    name: netcatbank_rede_saida_dev
+
+volumes:
+  dependencias-node-dev:
+  dados-postgres-dev:
+  dados-redis-dev:

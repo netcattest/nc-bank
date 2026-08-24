@@ -1,0 +1,29 @@
+{
+  "name": "@netcatbank/api",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "desenvolver": "tsx watch src/servidor.ts",
+    "construir": "tsc -p tsconfig.json",
+    "iniciar": "node dist/servidor.js",
+    "verificar": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@fastify/cors": "11.2.0",
+    "@fastify/helmet": "13.0.2",
+    "@fastify/rate-limit": "11.1.0",
+    "@types/pg": "^8.20.0",
+    "fastify": "5.9.0",
+    "pg": "^8.22.0",
+    "qrcode": "^1.5.4",
+    "redis": "^5.12.1",
+    "sharp": "^0.35.3"
+  },
+  "devDependencies": {
+    "@types/node": "26.1.0",
+    "@types/qrcode": "^1.5.6",
+    "tsx": "4.22.4",
+    "typescript": "6.0.3"
+  }
+}

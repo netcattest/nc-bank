@@ -1,0 +1,24 @@
+{
+  "name": "@netcatbank/frente",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "desenvolver": "NEXT_TELEMETRY_DISABLED=1 next dev --hostname 0.0.0.0 --port 3000",
+    "construir": "NEXT_TELEMETRY_DISABLED=1 next build",
+    "iniciar": "next start --hostname 0.0.0.0 --port 3000",
+    "verificar": "tsc --noEmit"
+  },
+  "dependencies": {
+    "lucide-react": "^1.23.0",
+    "next": "16.2.9",
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
+  },
+  "devDependencies": {
+    "@types/node": "26.1.0",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "typescript": "6.0.3"
+  }
+}

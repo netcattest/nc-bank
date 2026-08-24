@@ -1,0 +1,35 @@
+{
+  "name": "netcat-bank",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "aplicacoes/*"
+  ],
+  "overrides": {
+    "next": {
+      "postcss": "8.5.16"
+    }
+  },
+  "scripts": {
+    "instalar": "npm install",
+    "preparar:marca": "node ferramentas/preparar-marca.mjs",
+    "preparar:mtls": "node ferramentas/gerar-mtls-interno.mjs",
+    "verificar": "npm run verificar --workspaces --if-present",
+    "verificar:seguranca": "NODE_NO_WARNINGS=1 node ferramentas/verificar-seguranca-api.mjs",
+    "verificar:visual": "node ferramentas/verificar-fluxo-visual.mjs",
+    "construir": "npm run construir --workspaces --if-present",
+    "desenvolver": "docker compose -f compose.desenvolvimento.yml up --build",
+    "producao": "docker compose --env-file .env -f compose.producao.yml up -d --build",
+    "parar": "docker compose -f compose.desenvolvimento.yml down --remove-orphans",
+    "parar:producao": "docker compose --env-file .env -f compose.producao.yml down --remove-orphans"
+  },
+  "engines": {
+    "node": ">=22.20.0",
+    "npm": ">=10.0.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.61.1",
+    "sharp": "^0.35.3"
+  }
+}

@@ -1,0 +1,283 @@
+name: netcatbank
+
+services:
+  proxy:
+    image: traefik:v3.7.6
+    restart: unless-stopped
+    command:
+      - --api.dashboard=false
+      - --global.checknewversion=false
+      - --global.sendanonymoususage=false
+      - --log.level=INFO
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.cloudflare.acme.email=${LETSENCRYPT_EMAIL}
+      - --certificatesresolvers.cloudflare.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.cloudflare.acme.dnschallenge.provider=cloudflare
+      - --certificatesresolvers.cloudflare.acme.dnschallenge.resolvers=1.1.1.1:53,1.0.0.1:53
+    environment:
+      CF_DNS_API_TOKEN: ${CF_DNS_API_TOKEN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - certificados-traefik:/letsencrypt
+    networks:
+      - rede-publica
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+    labels:
+      - traefik.enable=true
+      - traefik.http.middlewares.cabecalhos-seguros.headers.stsSeconds=63072000
+      - traefik.http.middlewares.cabecalhos-seguros.headers.stsIncludeSubdomains=true
+      - traefik.http.middlewares.cabecalhos-seguros.headers.stsPreload=true
+      - traefik.http.middlewares.cabecalhos-seguros.headers.forceSTSHeader=true
+      - traefik.http.middlewares.cabecalhos-seguros.headers.contentTypeNosniff=true
+      - traefik.http.middlewares.cabecalhos-seguros.headers.referrerPolicy=no-referrer
+      - traefik.http.middlewares.cabecalhos-seguros.headers.permissionsPolicy=camera=(), microphone=(), geolocation=(), payment=()
+
+  frente:
+    build:
+      context: .
+      dockerfile: aplicacoes/frente/Dockerfile
+      target: execucao
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      API_INTERNA_URL: https://api:3001
+      NCBANK_CANAL_INTERNO_ATIVO: "true"
+      NCBANK_IDENTIDADE_BFF: ${NCBANK_IDENTIDADE_BFF:-netcatbank-frente-bff}
+      NCBANK_ID_SEGREDO_CANAL_INTERNO: ${NCBANK_ID_SEGREDO_CANAL_INTERNO:-atual}
+      NCBANK_SEGREDO_CANAL_INTERNO: ${NCBANK_SEGREDO_CANAL_INTERNO}
+      NCBANK_MTLS_CLIENTE_ATIVO: "true"
+      NCBANK_MTLS_CA: /run/secrets/mtls_ca.crt
+      NCBANK_MTLS_CLIENTE_CERT: /run/secrets/mtls_bff.crt
+      NCBANK_MTLS_CLIENTE_KEY: /run/secrets/mtls_bff.key
+      NCBANK_MTLS_SERVERNAME: ${NCBANK_MTLS_SERVERNAME:-api.netcatbank.interno}
+      NEXT_PUBLIC_ABRIR_CONTA_URL: https://${SUBDOMINIO_ABRIR_CONTA}
+      NEXT_PUBLIC_AREA_CLIENTE_URL: https://${SUBDOMINIO_AREA_CLIENTE}
+      NEXT_PUBLIC_PAINEL_URL: https://${SUBDOMINIO_PAINEL}
+      NEXT_PUBLIC_INDICACOES_URL: https://${SUBDOMINIO_INDICACOES:-indique.netcatbank.com}
+      NEXT_PUBLIC_ESTATICOS_URL: https://${SUBDOMINIO_ESTATICOS}
+      NEXT_TELEMETRY_DISABLED: "1"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - rede-publica
+      - rede-privada
+    secrets:
+      - source: mtls_ca
+        target: mtls_ca.crt
+      - source: mtls_bff_cert
+        target: mtls_bff.crt
+      - source: mtls_bff_key
+        target: mtls_bff.key
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=netcatbank_rede_publica
+      - traefik.http.routers.frente.rule=Host(`${DOMINIO_PRINCIPAL}`) || Host(`www.${DOMINIO_PRINCIPAL}`)
+      - traefik.http.routers.frente.entrypoints=websecure
+      - traefik.http.routers.frente.tls.certresolver=cloudflare
+      - traefik.http.routers.frente.middlewares=cabecalhos-seguros@docker
+      - traefik.http.services.frente.loadbalancer.server.port=3000
+      - traefik.http.middlewares.limite-abertura.ratelimit.average=80
+      - traefik.http.middlewares.limite-abertura.ratelimit.burst=40
+      - traefik.http.middlewares.limite-abertura.ratelimit.period=1m
+      - traefik.http.routers.abertura.rule=Host(`${SUBDOMINIO_ABRIR_CONTA}`)
+      - traefik.http.routers.abertura.entrypoints=websecure
+      - traefik.http.routers.abertura.tls.certresolver=cloudflare
+      - traefik.http.routers.abertura.middlewares=cabecalhos-seguros@docker,limite-abertura@docker
+      - traefik.http.routers.abertura.service=frente
+      - traefik.http.middlewares.limite-cliente.ratelimit.average=80
+      - traefik.http.middlewares.limite-cliente.ratelimit.burst=40
+      - traefik.http.middlewares.limite-cliente.ratelimit.period=1m
+      - traefik.http.routers.cliente.rule=Host(`${SUBDOMINIO_AREA_CLIENTE}`)
+      - traefik.http.routers.cliente.entrypoints=websecure
+      - traefik.http.routers.cliente.tls.certresolver=cloudflare
+      - traefik.http.routers.cliente.middlewares=cabecalhos-seguros@docker,limite-cliente@docker
+      - traefik.http.routers.cliente.service=frente
+      - traefik.http.middlewares.limite-painel.ratelimit.average=120
+      - traefik.http.middlewares.limite-painel.ratelimit.burst=40
+      - traefik.http.middlewares.limite-painel.ratelimit.period=1m
+      - traefik.http.routers.painel.rule=Host(`${SUBDOMINIO_PAINEL}`)
+      - traefik.http.routers.painel.entrypoints=websecure
+      - traefik.http.routers.painel.tls.certresolver=cloudflare
+      - traefik.http.routers.painel.middlewares=cabecalhos-seguros@docker,limite-painel@docker
+      - traefik.http.routers.painel.service=frente
+      - traefik.http.middlewares.limite-indicacoes.ratelimit.average=80
+      - traefik.http.middlewares.limite-indicacoes.ratelimit.burst=30
+      - traefik.http.middlewares.limite-indicacoes.ratelimit.period=1m
+      - traefik.http.routers.indicacoes.rule=Host(`${SUBDOMINIO_INDICACOES:-indique.netcatbank.com}`)
+      - traefik.http.routers.indicacoes.entrypoints=websecure
+      - traefik.http.routers.indicacoes.tls.certresolver=cloudflare
+      - traefik.http.routers.indicacoes.middlewares=cabecalhos-seguros@docker,limite-indicacoes@docker
+      - traefik.http.routers.indicacoes.service=frente
+
+  estaticos:
+    image: nginxinc/nginx-unprivileged:1.29-alpine
+    restart: unless-stopped
+    volumes:
+      - ./aplicacoes/frente/public:/usr/share/nginx/html:ro
+      - ./infraestrutura/estaticos/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - rede-publica
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8080/marca/favicon-32x32.png"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=netcatbank_rede_publica
+      - traefik.http.routers.estaticos.rule=Host(`${SUBDOMINIO_ESTATICOS}`)
+      - traefik.http.routers.estaticos.entrypoints=websecure
+      - traefik.http.routers.estaticos.tls.certresolver=cloudflare
+      - traefik.http.routers.estaticos.middlewares=cabecalhos-seguros@docker
+      - traefik.http.services.estaticos.loadbalancer.server.port=8080
+
+  api:
+    build:
+      context: .
+      dockerfile: aplicacoes/api/Dockerfile
+      target: execucao
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORTA: 3001
+      ORIGENS_PERMITIDAS: ${ORIGENS_PERMITIDAS}
+      URL_ESTATICOS_PUBLICA: https://${SUBDOMINIO_ESTATICOS}
+      URL_INDICACOES_PUBLICA: https://${SUBDOMINIO_INDICACOES:-indique.netcatbank.com}
+      NCBANK_COOKIE_DOMAIN: ${NCBANK_COOKIE_DOMAIN:-netcatbank.com}
+      NCBANK_SEGREDO_APLICACAO: ${NCBANK_SEGREDO_APLICACAO}
+      NCBANK_IDENTIDADE_BFF: ${NCBANK_IDENTIDADE_BFF:-netcatbank-frente-bff}
+      NCBANK_ID_SEGREDO_CANAL_INTERNO: ${NCBANK_ID_SEGREDO_CANAL_INTERNO:-atual}
+      NCBANK_ID_SEGREDO_CANAL_INTERNO_ANTERIOR: ${NCBANK_ID_SEGREDO_CANAL_INTERNO_ANTERIOR:-anterior}
+      NCBANK_SEGREDO_CANAL_INTERNO: ${NCBANK_SEGREDO_CANAL_INTERNO}
+      NCBANK_SEGREDO_CANAL_INTERNO_ANTERIOR: ${NCBANK_SEGREDO_CANAL_INTERNO_ANTERIOR:-}
+      NCBANK_MTLS_API_ATIVO: "true"
+      NCBANK_MTLS_CA: /run/secrets/mtls_ca.crt
+      NCBANK_MTLS_API_CERT: /run/secrets/mtls_api.crt
+      NCBANK_MTLS_API_KEY: /run/secrets/mtls_api.key
+      NCBANK_MTLS_CLIENTE_CN: ${NCBANK_MTLS_CLIENTE_CN:-bff.netcatbank.interno}
+      NCBANK_CHAVE_PRIVADA_TRANSPORTE: ${NCBANK_CHAVE_PRIVADA_TRANSPORTE}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@banco-dados:5432/${POSTGRES_DB}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@cache:6379
+    depends_on:
+      banco-dados:
+        condition: service_healthy
+      cache:
+        condition: service_healthy
+    networks:
+      - rede-privada
+      - rede-saida
+    secrets:
+      - source: mtls_ca
+        target: mtls_ca.crt
+      - source: mtls_api_cert
+        target: mtls_api.crt
+      - source: mtls_api_key
+        target: mtls_api.key
+      - source: mtls_monitor_cert
+        target: mtls_monitor.crt
+      - source: mtls_monitor_key
+        target: mtls_monitor.key
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "node", "-e", "const https=require('node:https'),fs=require('node:fs');const o={hostname:'127.0.0.1',port:3001,path:'/saude',servername:process.env.NCBANK_MTLS_SERVERNAME||'api.netcatbank.interno',ca:fs.readFileSync('/run/secrets/mtls_ca.crt'),cert:fs.readFileSync('/run/secrets/mtls_monitor.crt'),key:fs.readFileSync('/run/secrets/mtls_monitor.key'),rejectUnauthorized:true,minVersion:'TLSv1.3'};const r=https.request(o,(s)=>process.exit(s.statusCode===200?0:1));r.on('error',()=>process.exit(1));r.end();"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  banco-dados:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - dados-postgres:/var/lib/postgresql
+      - ./infraestrutura/banco-dados/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - rede-privada
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  cache:
+    image: redis:8-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    volumes:
+      - dados-redis:/data
+    networks:
+      - rede-privada
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+networks:
+  rede-publica:
+    name: netcatbank_rede_publica
+  rede-privada:
+    name: netcatbank_rede_privada
+    internal: true
+  rede-saida:
+    name: netcatbank_rede_saida
+
+volumes:
+  certificados-traefik:
+  dados-postgres:
+  dados-redis:
+
+secrets:
+  mtls_ca:
+    file: ./segredos/mtls/ca.crt
+  mtls_api_cert:
+    file: ./segredos/mtls/api.crt
+  mtls_api_key:
+    file: ./segredos/mtls/api.key
+  mtls_bff_cert:
+    file: ./segredos/mtls/bff.crt
+  mtls_bff_key:
+    file: ./segredos/mtls/bff.key
+  mtls_monitor_cert:
+    file: ./segredos/mtls/monitor.crt
+  mtls_monitor_key:
+    file: ./segredos/mtls/monitor.key
